@@ -48,11 +48,47 @@ class DinoV2ExtractFeatures:
             - norm_descs:   If True, the descriptors are normalized
             - device:   PyTorch device to use
         """
+        import sys, time, threading, os as _os
         self.vit_type: str = dino_model
-        self.dino_model: nn.Module = torch.hub.load(
-                'facebookresearch/dinov2', dino_model)
-        self.device = torch.device(device)
-        self.dino_model = self.dino_model.eval().to(self.device)
+
+        # Background heartbeat: prints every 10 s so we can tell alive vs frozen
+        _stop_hb = threading.Event()
+        _step = ["hub.load"]
+        def _heartbeat():
+            t0 = time.time()
+            while not _stop_hb.wait(timeout=10):
+                print(f"[DEBUG] ... still loading ({time.time()-t0:.0f}s, step={_step[0]})",
+                      flush=True)
+        _hb = threading.Thread(target=_heartbeat, daemon=True)
+        _hb.start()
+
+        try:
+            # Prefer source='local' to skip network validation round-trip
+            _hub_dir = torch.hub.get_dir()
+            _local_repo = _os.path.join(_hub_dir, 'facebookresearch_dinov2_main')
+            _t0 = time.time()
+            if _os.path.isdir(_local_repo):
+                print(f"[DEBUG] torch.hub.load source=local  ({_local_repo})", flush=True)
+                self.dino_model: nn.Module = torch.hub.load(
+                        _local_repo, dino_model, source='local')
+            else:
+                print(f"[DEBUG] torch.hub.load source=github  ({dino_model})", flush=True)
+                self.dino_model: nn.Module = torch.hub.load(
+                        'facebookresearch/dinov2', dino_model)
+            print(f"[DEBUG] torch.hub.load done ({time.time()-_t0:.1f}s)", flush=True)
+
+            self.device = torch.device(device)
+            _step[0] = "eval()"
+            print(f"[DEBUG] .eval() ...", flush=True)
+            self.dino_model = self.dino_model.eval()
+            print(f"[DEBUG] .eval() done", flush=True)
+
+            _step[0] = f"to({self.device})"
+            print(f"[DEBUG] .to({self.device}) ...", flush=True)
+            self.dino_model = self.dino_model.to(self.device)
+            print(f"[DEBUG] .to({self.device}) done  ({time.time()-_t0:.1f}s total)", flush=True)
+        finally:
+            _stop_hb.set()
         self.layer: int = layer
         self.facet = facet
         if self.facet == "token":
