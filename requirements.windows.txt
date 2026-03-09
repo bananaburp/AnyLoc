@@ -1,0 +1,11 @@
+numpy
+torch
+torchvision
+transformers
+einops
+fast-pytorch-kmeans
+faiss-cpu
+Pillow
+tqdm
+matplotlib
+scikit-learn

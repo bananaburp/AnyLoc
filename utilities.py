@@ -464,8 +464,16 @@ def get_top_k_recall(top_k: List[int], db: torch.Tensor,
                         correct_retr)):
                 recalls[i_rec] += 1
     if use_percentage:
+        # Only count queries that have at least one GT positive as the
+        # denominator; queries with an empty correct set can never be
+        # recalled and should not penalise the metric.
+        n_retrievable = sum(
+            1 for i in range(len(indices))
+            if len(gt_pos[i * sub_sample_qu]) > 0
+        )
+        denom = n_retrievable if n_retrievable > 0 else len(indices)
         for k in recalls:
-            recalls[k] /= len(indices)
+            recalls[k] = recalls[k] / denom * 100   # → true percentage
     return distances, indices, recalls
 
 
