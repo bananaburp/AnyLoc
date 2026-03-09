@@ -1,0 +1,6 @@
+Dataset: datasets_vg\datasets\hilti\floor_1
+Domain:  indoor   Clusters: 32
+
+R@1: 0.1063%
+R@5: 0.1092%
+R@10: 0.1092%

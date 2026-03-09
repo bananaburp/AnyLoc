@@ -8,6 +8,21 @@ Usage:
       --dataset_dir  datasets_vg/datasets/hilti/floor_1 \
       --domain       indoor \
       --out_dir      results/floor_1
+
+
+    # Windows PowerShell
+    python demo/run_anyloc_eval.py `
+            --dataset_dir 'datasets_vg\datasets\hilti\floor_1' `
+            --domain indoor `
+            --out_dir results/floor_1
+
+    # Windows PowerShell (quick test)
+    python demo/run_anyloc_eval.py `
+            --dataset_dir 'datasets_vg\datasets\hilti\floor_1' `
+            --domain indoor `
+            --out_dir results/floor_1_test `
+            --max_img_size 224 `
+            --max_images 20
 """
 
 import os, glob, argparse, warnings
@@ -35,9 +50,38 @@ get_top_k_recall = _root_utils.get_top_k_recall
 
 
 def load_images_sorted(folder: str):
-    paths = sorted(glob.glob(f"{folder}/*.jpg"),
-                   key=lambda p: os.path.basename(p))
-    assert paths, f"No .jpg found in {folder}"
+    # Support mixed formats and nested folders common in custom eval sets.
+    exts = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
+    folder_path = Path(folder)
+
+    try:
+        paths = sorted(
+            [str(p) for p in folder_path.rglob("*")
+             if p.is_file() and p.suffix.lower() in exts],
+            key=lambda p: os.path.basename(p).lower())
+    except PermissionError as e:
+        raise PermissionError(
+            f"Access denied while reading '{folder}'. "
+            "If this is a network/UNC path, ensure this shell has permission "
+            "to the share (or copy/map the dataset locally and pass that path)."
+        ) from e
+
+    if not paths:
+        if not folder_path.exists():
+            raise FileNotFoundError(f"Folder not found: {folder}")
+        try:
+            present_exts = sorted({p.suffix.lower() for p in folder_path.rglob("*")
+                                  if p.is_file() and p.suffix})
+        except PermissionError as e:
+            raise PermissionError(
+                f"Access denied while reading '{folder}'. "
+                "If this is a network/UNC path, ensure this shell has permission "
+                "to the share (or copy/map the dataset locally and pass that path)."
+            ) from e
+        raise AssertionError(
+            f"No supported images found in {folder}. "
+            f"Supported: {exts}. Present extensions: {present_exts[:20]}"
+        )
     return paths
 
 
@@ -105,6 +149,8 @@ def main():
     ap.add_argument("--device", default="auto",
                     choices=["auto", "cuda", "mps", "cpu"],
                     help="Force a specific device (default: auto-detect)")
+    ap.add_argument("--max_images", type=int, default=None,
+                    help="Limit DB and query to first N images (for quick tests)")
     args = ap.parse_args()
 
     if args.device != "auto":
@@ -148,6 +194,10 @@ def main():
     qu_dir = os.path.join(args.dataset_dir, "images", "test", "queries")
     db_paths = load_images_sorted(db_dir)
     qu_paths = load_images_sorted(qu_dir)
+    if args.max_images is not None:
+        db_paths = db_paths[:args.max_images]
+        qu_paths = qu_paths[:args.max_images]
+        print(f"[quick-test] Limiting to {args.max_images} images per split", flush=True)
     print(f"DB: {len(db_paths)}  Query: {len(qu_paths)}", flush=True)
 
     # ── Descriptors ─────────────────────────────────────────────────────────
