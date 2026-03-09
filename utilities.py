@@ -11,7 +11,6 @@ from torch.nn import functional as F
 import einops as ein
 import fast_pytorch_kmeans as fpk
 import faiss
-import faiss.contrib.torch_utils
 import random
 import os
 from PIL import Image
@@ -445,9 +444,12 @@ def get_top_k_recall(top_k: List[int], db: torch.Tensor,
     if use_gpu:
         res = faiss.StandardGpuResources()
         index = faiss.index_cpu_to_gpu(res, 0 , index)
+    # Convert to contiguous float32 numpy arrays for faiss (required on ARM/MPS)
+    db_np = db.detach().cpu().contiguous().numpy().astype(np.float32)
+    qu_np = qu.detach().cpu().contiguous().numpy().astype(np.float32)
     # Get the max(top-k) retrieval, then traverse list
-    index.add(db)
-    distances, indices = index.search(qu, max(top_k))
+    index.add(db_np)
+    distances, indices = index.search(qu_np, max(top_k))
     recalls = dict(zip(top_k, [0]*len(top_k)))
     # print(qu.shape,indices.shape)
     for i_qu, qu_retr in enumerate(indices):

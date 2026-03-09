@@ -156,3 +156,6 @@ imagebind_repo
 *.jpg
 *.jpeg
 *.png
+
+*.npy
+results/

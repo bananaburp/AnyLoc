@@ -4,27 +4,38 @@ run_anyloc_eval.py
 End-to-end AnyLoc-VLAD-DINOv2 recall evaluation on a prepared dataset.
 
 Usage:
-python demo/run_anyloc_eval.py \
-    --dataset_dir  datasets_vg/datasets/hilti/floor_1 \
-    --domain       indoor \
-    --out_dir      results/floor_1 \
-    --device mps \
-    --max_images 10
+
+    # floor_2 cross-run eval (macOS, default paths)
+    /Users/Aryan/miniforge-arm64/envs/anyloc-arm64/bin/python demo/run_anyloc_eval.py \
+        --db_dir    /Volumes/T9/DevSpace/Github/hilti-trimble-slam-challenge-2026/challenge_tools_ros/vpr/data/floor_2_2025-05-05_run_1/eval/mixvpr_evalset_2m/db_full_cam0 \
+        --query_dir /Volumes/T9/DevSpace/Github/hilti-trimble-slam-challenge-2026/challenge_tools_ros/vpr/data/floor_2_2025-10-28_run_1/eval/mixvpr_evalset_2m/query_full_cam0 \
+        --gt_path   /Volumes/T9/DevSpace/Github/hilti-trimble-slam-challenge-2026/challenge_tools_ros/vpr/data/floor_2_2025-10-28_run_1/eval/mixvpr_evalset_2m/gt_positives.npy \
+        --domain    indoor \
+        --out_dir   results/floor_2_cross_run \
+        --device    mps \
+        --batch_size 1 --max_img_size 224 --max_images 20
 
     # Windows PowerShell (recommended: GPU + fp16 for speed)
     python demo/run_anyloc_eval.py `
-            --dataset_dir 'datasets_vg\datasets\data\floor_1_2025-05-05_run_1' `
+            --db_dir    'path\to\floor_2_2025-05-05_run_1\eval\mixvpr_evalset_2m\db_full_cam0' `
+            --query_dir 'path\to\floor_2_2025-10-28_run_1\eval\mixvpr_evalset_2m\query_full_cam0' `
+            --gt_path   'path\to\floor_2_2025-10-28_run_1\eval\mixvpr_evalset_2m\gt_positives.npy' `
             --domain indoor `
-            --out_dir results/floor_1 `
+            --out_dir results/floor_2_cross_run `
             --device cuda --fp16 --use_gpu_index
 
-    # Windows PowerShell (quick test)
+    # Quick test (limit images)
     python demo/run_anyloc_eval.py `
-            --dataset_dir 'datasets_vg\datasets\data\floor_1_2025-05-05_run_1' `
+            --db_dir    'path\to\db_full_cam0' `
+            --query_dir 'path\to\query_full_cam0' `
+            --gt_path   'path\to\gt_positives.npy' `
             --domain indoor `
-            --out_dir results/floor_1_quick_test `
+            --out_dir results/floor_2_quick_test `
             --max_img_size 224 `
             --max_images 20
+
+Note: --gt_path is a single cross-run file mapping each query index to its
+      positive DB indices. Only one GT file is needed (not one per split).
 """
 
 import os, glob, argparse, warnings
@@ -162,17 +173,13 @@ def save_top1_grid(qu_paths, db_paths, indices, out_path, n_show=20):
 
 def main():
     ap = argparse.ArgumentParser()
-    _base = ("/Volumes/T9/DevSpace/Github/hilti-trimble-slam-challenge-2026"
-             "/challenge_tools_ros/vpr/data/floor_1_2025-05-05_run_1"
-             "/eval/mixvpr_evalset_5m")
-    ap.add_argument("--dataset_dir",  default=_base,
-                    help="Root of the eval set (used to derive sub-paths if "
-                         "--db_dir / --query_dir / --gt_path are not set)")
-    ap.add_argument("--db_dir",    default=os.path.join(_base, "db_cam0"),
+    ap.add_argument("--dataset_dir",  default=None,
+                    help="Root of the eval set (unused when --db_dir / --query_dir are set)")
+    ap.add_argument("--db_dir",    required=True,
                     help="Path to database images folder")
-    ap.add_argument("--query_dir", default=os.path.join(_base, "query_cam0"),
+    ap.add_argument("--query_dir", required=True,
                     help="Path to query images folder")
-    ap.add_argument("--gt_path",   default=os.path.join(_base, "gt_positives.npy"),
+    ap.add_argument("--gt_path",   required=True,
                     help="Path to ground-truth .npy file")
     ap.add_argument("--domain",       default="indoor",
                     choices=["indoor", "urban", "aerial", "custom_floor1"])
@@ -188,7 +195,7 @@ def main():
     ap.add_argument("--use_gpu_index",action="store_true")
     ap.add_argument("--fp16",         action="store_true",
                     help="Use fp16 autocast for faster GPU inference (CUDA only)")
-    ap.add_argument("--device", default="cuda",
+    ap.add_argument("--device", default="mps",
                     choices=["auto", "cuda", "mps", "cpu"],
                     help="Force a specific device (default: auto-detect)")
     ap.add_argument("--max_images", type=int, default=None,
@@ -208,8 +215,12 @@ def main():
             device = torch.device("cpu")
     else:
         if args.device == "cuda" and not torch.cuda.is_available():
-            print("WARNING: --device cuda requested but CUDA not available, falling back to CPU", flush=True)
-            device = torch.device("cpu")
+            if torch.backends.mps.is_available():
+                print("WARNING: --device cuda requested but CUDA not available, falling back to MPS", flush=True)
+                device = torch.device("mps")
+            else:
+                print("WARNING: --device cuda requested but CUDA not available, falling back to CPU", flush=True)
+                device = torch.device("cpu")
         else:
             device = torch.device(args.device)
     if args.fp16 and device.type != "cuda":
@@ -232,10 +243,8 @@ def main():
     print(f"Loaded VLAD vocabulary: {c_ctr_file}", flush=True)
 
     # ── Images ──────────────────────────────────────────────────────────────
-    db_dir = os.path.join(args.dataset_dir, "images", "test", "database")
-    qu_dir = os.path.join(args.dataset_dir, "images", "test", "queries")
-    db_paths = load_images_sorted(db_dir)
-    qu_paths = load_images_sorted(qu_dir)
+    db_paths = load_images_sorted(args.db_dir)
+    qu_paths = load_images_sorted(args.query_dir)
     if args.max_images is not None:
         db_paths = db_paths[:args.max_images]
         qu_paths = qu_paths[:args.max_images]
@@ -305,7 +314,6 @@ def main():
         np.save(qu_cache, qu_descs)
         print(f"Query descriptors cached → {qu_cache}", flush=True)
     print(f"Query descriptors ready. Shape: {qu_descs.shape}", flush=True)
-    print(f"Query descriptors done. Shape: {qu_descs.shape}", flush=True)
 
     # ── Recall ──────────────────────────────────────────────────────────────
     print("Computing recall...", flush=True)
