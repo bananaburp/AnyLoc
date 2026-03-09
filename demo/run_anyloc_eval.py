@@ -5,9 +5,10 @@ End-to-end AnyLoc-VLAD-DINOv2 recall evaluation on a prepared dataset.
 
 Usage:
   python demo/run_anyloc_eval.py \
-      --dataset_dir  datasets_vg/datasets/hilti/floor_1 \
-      --domain       indoor \
-      --out_dir      results/floor_1
+    --dataset_dir  datasets_vg/datasets/hilti/floor_1 \
+    --domain       indoor \
+    --out_dir      results/floor_1\
+    --device mps    
 """
 
 import os, glob, argparse, warnings
@@ -90,8 +91,18 @@ def save_top1_grid(qu_paths, db_paths, indices, out_path, n_show=20):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dataset_dir",  required=True,
-                    help="Root produced by prepare_custom_dataset.py")
+    _base = ("/Volumes/T9/DevSpace/Github/hilti-trimble-slam-challenge-2026"
+             "/challenge_tools_ros/vpr/data/floor_1_2025-05-05_run_1"
+             "/eval/mixvpr_evalset_5m")
+    ap.add_argument("--dataset_dir",  default=_base,
+                    help="Root of the eval set (used to derive sub-paths if "
+                         "--db_dir / --query_dir / --gt_path are not set)")
+    ap.add_argument("--db_dir",    default=os.path.join(_base, "db_cam0"),
+                    help="Path to database images folder")
+    ap.add_argument("--query_dir", default=os.path.join(_base, "query_cam0"),
+                    help="Path to query images folder")
+    ap.add_argument("--gt_path",   default=os.path.join(_base, "gt_positives.npy"),
+                    help="Path to ground-truth .npy file")
     ap.add_argument("--domain",       default="indoor",
                     choices=["indoor", "urban", "aerial", "custom_floor1"])
     ap.add_argument("--num_clusters", type=int, default=32)
@@ -144,10 +155,8 @@ def main():
     print("DINOv2 ViT-G/14  layer=31  facet=value  ready", flush=True)
 
     # ── Images ──────────────────────────────────────────────────────────────
-    db_dir = os.path.join(args.dataset_dir, "images", "test", "database")
-    qu_dir = os.path.join(args.dataset_dir, "images", "test", "queries")
-    db_paths = load_images_sorted(db_dir)
-    qu_paths = load_images_sorted(qu_dir)
+    db_paths = load_images_sorted(args.db_dir)
+    qu_paths = load_images_sorted(args.query_dir)
     print(f"DB: {len(db_paths)}  Query: {len(qu_paths)}", flush=True)
 
     # ── Descriptors ─────────────────────────────────────────────────────────
@@ -165,9 +174,11 @@ def main():
 
     # ── Recall ──────────────────────────────────────────────────────────────
     print("Computing recall...", flush=True)
-    gt_path    = os.path.join(args.dataset_dir, "ground_truth_new.npy")
-    gt_anyloc  = np.load(gt_path, allow_pickle=True)
-    gt_pos     = gt_anyloc[:, 1]   # shape [n_qu,] of int arrays
+    gt_anyloc  = np.load(args.gt_path, allow_pickle=True)
+    if gt_anyloc.ndim == 2:
+        gt_pos = gt_anyloc[:, 1]   # shape [n_qu,] — (N,2) format with col0=query_idx
+    else:
+        gt_pos = gt_anyloc         # shape [n_qu,] — already array-of-arrays
 
     db_t = torch.from_numpy(db_descs.astype(np.float32))
     qu_t = torch.from_numpy(qu_descs.astype(np.float32))

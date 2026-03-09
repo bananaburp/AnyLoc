@@ -63,8 +63,25 @@ class DinoV2ExtractFeatures:
         _hb.start()
 
         try:
-            # Prefer source='local' to skip network validation round-trip
+            import torch.hub as _thub
             _hub_dir = torch.hub.get_dir()
+            _ckpt_dir = _os.path.join(_hub_dir, 'checkpoints')
+
+            # Monkey-patch load_state_dict_from_url to use local cache immediately,
+            # bypassing the network request that hangs when the server is unreachable.
+            _orig_lsdfu = _thub.load_state_dict_from_url
+            def _local_lsdfu(url, *args, **kwargs):
+                fname = url.split('/')[-1].split('?')[0]
+                local_path = _os.path.join(_ckpt_dir, fname)
+                if _os.path.isfile(local_path):
+                    print(f"[DEBUG] weights: local cache hit → {local_path}", flush=True)
+                    return torch.load(local_path,
+                                      map_location=kwargs.get('map_location', 'cpu'),
+                                      weights_only=False)
+                print(f"[DEBUG] weights: not cached, downloading from {url}", flush=True)
+                return _orig_lsdfu(url, *args, **kwargs)
+            _thub.load_state_dict_from_url = _local_lsdfu
+
             _local_repo = _os.path.join(_hub_dir, 'facebookresearch_dinov2_main')
             _t0 = time.time()
             if _os.path.isdir(_local_repo):
@@ -75,6 +92,8 @@ class DinoV2ExtractFeatures:
                 print(f"[DEBUG] torch.hub.load source=github  ({dino_model})", flush=True)
                 self.dino_model: nn.Module = torch.hub.load(
                         'facebookresearch/dinov2', dino_model)
+
+            _thub.load_state_dict_from_url = _orig_lsdfu  # restore
             print(f"[DEBUG] torch.hub.load done ({time.time()-_t0:.1f}s)", flush=True)
 
             self.device = torch.device(device)
