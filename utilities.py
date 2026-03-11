@@ -434,22 +434,24 @@ def get_top_k_recall(top_k: List[int], db: torch.Tensor,
     if norm_descs:
         db = F.normalize(db)
         qu = F.normalize(qu)
-    D = db.shape[1]
+    # Brute-force top-k via torch (avoids faiss OpenMP conflict on macOS ARM64).
+    # For cosine (IP after normalization) and L2 this is numerically identical
+    # to faiss IndexFlatIP / IndexFlatL2 and fast enough for eval workloads.
+    db_cpu = db.detach().cpu().float()
+    qu_cpu = qu.detach().cpu().float()
     if method == "cosine":
-        index = faiss.IndexFlatIP(D)
+        sim = qu_cpu @ db_cpu.T          # [n_qu, n_db], higher = better
+        distances_t, indices_t = torch.topk(sim, max(top_k), dim=1, largest=True)
     elif method == "l2":
-        index = faiss.IndexFlatL2(D)
+        # ||q - d||^2 = ||q||^2 + ||d||^2 - 2 q·d
+        diff = (qu_cpu.unsqueeze(1) - db_cpu.unsqueeze(0))  # broadcast [n_qu, n_db, D]
+        sim  = -(diff ** 2).sum(-1)      # negative L2^2, higher = better (for topk largest)
+        distances_t, indices_t = torch.topk(sim, max(top_k), dim=1, largest=True)
+        distances_t = -distances_t       # restore positive L2^2 distances
     else:
         raise NotImplementedError(f"Method: {method}")
-    if use_gpu:
-        res = faiss.StandardGpuResources()
-        index = faiss.index_cpu_to_gpu(res, 0 , index)
-    # Convert to contiguous float32 numpy arrays for faiss (required on ARM/MPS)
-    db_np = db.detach().cpu().contiguous().numpy().astype(np.float32)
-    qu_np = qu.detach().cpu().contiguous().numpy().astype(np.float32)
-    # Get the max(top-k) retrieval, then traverse list
-    index.add(db_np)
-    distances, indices = index.search(qu_np, max(top_k))
+    distances = distances_t.numpy()
+    indices   = indices_t.numpy()
     recalls = dict(zip(top_k, [0]*len(top_k)))
     # print(qu.shape,indices.shape)
     for i_qu, qu_retr in enumerate(indices):

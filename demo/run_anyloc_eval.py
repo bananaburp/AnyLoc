@@ -7,13 +7,23 @@ Usage:
 
     # floor_2 cross-run eval (macOS, default paths)
     /Users/Aryan/miniforge-arm64/envs/anyloc-arm64/bin/python demo/run_anyloc_eval.py \
-        --db_dir    /Volumes/T9/DevSpace/Github/hilti-trimble-slam-challenge-2026/challenge_tools_ros/vpr/data/floor_2_2025-05-05_run_1/eval/mixvpr_evalset_2m/db_full_cam0 \
-        --query_dir /Volumes/T9/DevSpace/Github/hilti-trimble-slam-challenge-2026/challenge_tools_ros/vpr/data/floor_2_2025-10-28_run_1/eval/mixvpr_evalset_2m/query_full_cam0 \
-        --gt_path   /Volumes/T9/DevSpace/Github/hilti-trimble-slam-challenge-2026/challenge_tools_ros/vpr/data/floor_2_2025-10-28_run_1/eval/mixvpr_evalset_2m/gt_positives.npy \
+        --db_dir    /Volumes/T9/DevSpace/Github/hilti-trimble-slam-challenge-2026/challenge_tools_ros/vpr/data/crossrun_floor2_run1db_run2q_5m/db_cam0 \
+        --query_dir /Volumes/T9/DevSpace/Github/hilti-trimble-slam-challenge-2026/challenge_tools_ros/vpr/data/crossrun_floor2_run1db_run2q_5m/query_cam0 \
+        --gt_path   /Volumes/T9/DevSpace/Github/hilti-trimble-slam-challenge-2026/challenge_tools_ros/vpr/data/crossrun_floor2_run1db_run2q_5m/gt_positives.npy \
         --domain    indoor \
-        --out_dir   results/floor_2_cross_run \
+        --out_dir   results/floor_2_cross_run_run2_evalset_5m \
         --device    mps \
-        --batch_size 1 --max_img_size 224 --max_images 20
+        --batch_size 1 --max_img_size 512 --recompute 
+        
+    10hz:
+    /Users/Aryan/miniforge-arm64/envs/anyloc-arm64/bin/python demo/run_anyloc_eval.py \
+        --db_dir    /Volumes/T9/DevSpace/Github/hilti-trimble-slam-challenge-2026/challenge_tools_ros/vpr/data_10Hz/crossrun_floor2_run1db_run2q_3m_05m/db_cam0 \
+        --query_dir /Volumes/T9/DevSpace/Github/hilti-trimble-slam-challenge-2026/challenge_tools_ros/vpr/data_10Hz/crossrun_floor2_run1db_run2q_3m_05m/query_cam0 \
+        --gt_path   /Volumes/T9/DevSpace/Github/hilti-trimble-slam-challenge-2026/challenge_tools_ros/vpr/data_10Hz/crossrun_floor2_run1db_run2q_3m_05m/gt_positives.npy \
+        --domain    indoor \
+        --out_dir   results/floor_2_cross_run_run2_evalset_3m05m_10hz \
+        --device    mps \
+        --batch_size 1 --max_img_size 512 --recompute 
 
     # Windows PowerShell (recommended: GPU + fp16 for speed)
     python demo/run_anyloc_eval.py `
@@ -71,7 +81,8 @@ def load_images_sorted(folder: str):
     try:
         paths = sorted(
             [str(p) for p in folder_path.rglob("*")
-             if p.is_file() and p.suffix.lower() in exts],
+             if p.is_file() and p.suffix.lower() in exts
+             and not p.name.startswith("._")],
             key=lambda p: os.path.basename(p).lower())
     except PermissionError as e:
         raise PermissionError(
@@ -330,6 +341,14 @@ def main():
         for i in range(len(gt_pos)):
             gt_pos[i] = gt_pos[i][gt_pos[i] < args.max_images]
 
+    # GT defines the evaluable query count; truncate descriptors/paths to match.
+    n_gt = len(gt_pos)
+    if qu_descs.shape[0] > n_gt:
+        print(f"GT has {n_gt} entries; truncating queries from "
+              f"{qu_descs.shape[0]} → {n_gt}", flush=True)
+        qu_descs = qu_descs[:n_gt]
+        qu_paths = qu_paths[:n_gt]
+
     db_t = torch.from_numpy(db_descs.astype(np.float32))
     qu_t = torch.from_numpy(qu_descs.astype(np.float32))
 
@@ -346,7 +365,8 @@ def main():
 
     # ── Print results ────────────────────────────────────────────────────────
     print("\n" + "="*40)
-    print(f"  AnyLoc-VLAD-DINOv2 Recall  [{Path(args.dataset_dir).name}]")
+    dataset_label = Path(args.dataset_dir).name if args.dataset_dir else args.out_dir
+    print(f"  AnyLoc-VLAD-DINOv2 Recall  [{dataset_label}]")
     print(f"  Domain: {args.domain}   Clusters: {args.num_clusters}")
     print("="*40)
     for k, v in sorted(recalls.items()):
@@ -369,7 +389,7 @@ def main():
 
     # Summary text
     with open(os.path.join(args.out_dir, "recall_summary.txt"), "w") as f:
-        f.write(f"Dataset: {args.dataset_dir}\n")
+        f.write(f"Dataset: {args.dataset_dir or args.out_dir}\n")
         f.write(f"Domain:  {args.domain}   Clusters: {args.num_clusters}\n\n")
         for k, v in sorted(recalls.items()):
             f.write(f"R@{k}: {v:.4f}%\n")
